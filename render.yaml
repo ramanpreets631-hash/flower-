@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: flower-web
+    env: static
+    buildCommand: ""
+    publishPath: .
+    routes:
+      - type: rewrite
+        source: /
+        destination: /bloom.html
