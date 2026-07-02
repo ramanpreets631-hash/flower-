@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Bloom — flowers grown live from your hand</title>
+<style>
+  :root{
+    --ink:#07080b;
+    --panel: rgba(14,16,22,0.72);
+    --panel-border: rgba(231,201,143,0.18);
+    --gold:#e7c98f;
+    --gold-dim:#a8956c;
+    --leaf:#7fb37a;
+    --danger:#ff6b6b;
+    --text-dim:#8b8f9a;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0; padding:0; height:100%; width:100%;
+    background:var(--ink); color:#eee;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow:hidden;
+    overscroll-behavior:none;
+  }
+  #stage{
+    position:fixed; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--ink);
+  }
+  #canvasWrap{
+    position:relative;
+    max-width:100vw; max-height:100vh;
+    line-height:0;
+  }
+  canvas#view{
+    display:block;
+    width:auto; height:auto;
+    max-width:100vw; max-height:100vh;
+    background:#000;
+  }
+  video#cam{ display:none; }
+
+  /* ---- gate / loading screen ---- */
+  #gate{
+    position:fixed; inset:0; z-index:50;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:22px; padding:32px; text-align:center;
+    background:
+      radial-gradient(ellipse at 50% 30%, rgba(231,201,143,0.08), transparent 60%),
+      var(--ink);
+  }
+  #gate h1{
+    font-size:2.1rem; font-weight:300; letter-spacing:0.06em; margin:0;
+    color:#f2ead9;
+  }
+  #gate h1 b{ font-weight:600; color:var(--gold); }
+  #gate p{
+    max-width:420px; margin:0; color:var(--text-dim); font-size:0.95rem; line-height:1.5;
+  }
+  .bloom-mark{
+    width:64px; height:64px;
+    animation: sway 4.5s ease-in-out infinite;
+  }
+  @keyframes sway{
+    0%,100%{ transform: rotate(-4deg); }
+    50%{ transform: rotate(4deg); }
+  }
+  button.primary{
+    appearance:none; border:1px solid var(--gold); background:rgba(231,201,143,0.12);
+    color:var(--gold); font-size:1rem; letter-spacing:0.03em; padding:14px 34px;
+    border-radius:999px; cursor:pointer; font-weight:600;
+    transition: transform .15s ease, background .15s ease;
+  }
+  button.primary:active{ transform:scale(0.96); background:rgba(231,201,143,0.22); }
+  #gateError{ color:var(--danger); font-size:0.85rem; max-width:420px; display:none; }
+  #gateSpinner{ display:none; color:var(--text-dim); font-size:0.85rem; letter-spacing:0.04em; }
+
+  /* ---- HUD (drawn mostly on canvas, this is just a tiny DOM fallback layer) ---- */
+  #hint{
+    position:absolute; top:calc(env(safe-area-inset-top,0px) + 14px); left:16px; right:16px;
+    pointer-events:none; z-index:5;
+    font-size:0.72rem; color:rgba(255,255,255,0.55); letter-spacing:0.02em;
+    text-shadow:0 1px 3px rgba(0,0,0,0.6);
+    opacity:0; transition:opacity .4s ease;
+  }
+  #hint.show{ opacity:1; }
+
+  /* ---- control bar ---- */
+  #controls{
+    position:fixed; left:0; right:0; bottom:0; z-index:10;
+    display:flex; justify-content:center;
+    padding: 10px max(10px, env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(10px, env(safe-area-inset-left,0px));
+    pointer-events:none;
+  }
+  #controlBar{
+    pointer-events:auto;
+    display:flex; gap:6px; align-items:center;
+    background:var(--panel);
+    border:1px solid var(--panel-border);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    border-radius:22px;
+    padding:8px;
+    max-width:96vw;
+    overflow-x:auto;
+    scrollbar-width:none;
+  }
+  #controlBar::-webkit-scrollbar{ display:none; }
+  .ctl{
+    appearance:none; border:none; background:transparent;
+    color:#d8d4c8; display:flex; flex-direction:column; align-items:center; gap:3px;
+    padding:8px 12px; border-radius:16px; cursor:pointer; min-width:58px;
+    font-size:0.6rem; letter-spacing:0.03em; font-weight:600; text-transform:uppercase;
+    transition: background .15s ease, color .15s ease;
+    flex:0 0 auto;
+  }
+  .ctl svg{ width:20px; height:20px; }
+  .ctl:active{ background:rgba(255,255,255,0.08); }
+  .ctl.active{ color:var(--gold); background:rgba(231,201,143,0.14); }
+  .ctl.rec.active{ color:#ff8080; background:rgba(255,90,90,0.15); }
+  .ctl.rec.active svg circle{ fill:#ff5050; }
+
+  #topRight{
+    position:fixed; top:calc(env(safe-area-inset-top,0px) + 10px); right:calc(env(safe-area-inset-right,0px) + 10px);
+    z-index:10; display:flex; gap:8px;
+  }
+  .pill-btn{
+    appearance:none; border:1px solid var(--panel-border); background:var(--panel);
+    backdrop-filter: blur(10px);
+    color:#d8d4c8; border-radius:999px; padding:8px 10px; font-size:0.7rem; cursor:pointer;
+    display:flex; align-items:center; gap:6px;
+  }
+  .pill-btn svg{ width:16px; height:16px; }
+
+  #toast{
+    position:fixed; left:50%; top:calc(env(safe-area-inset-top,0px) + 16px);
+    transform:translate(-50%,-140%);
+    background:rgba(20,20,26,0.92); border:1px solid var(--panel-border); color:#f0ead9;
+    padding:9px 16px; border-radius:999px; font-size:0.78rem; z-index:30;
+    transition: transform .35s cubic-bezier(.2,.9,.2,1);
+    pointer-events:none; white-space:nowrap;
+  }
+  #toast.show{ transform:translate(-50%,0); }
+
+  a#dlLink{ display:none; }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="canvasWrap">
+    <canvas id="view"></canvas>
+  </div>
+</div>
+<video id="cam" playsinline muted autoplay></video>
+
+<div id="hint">Open your palm — flowers grow from your fingertips. Close your hand and they wither.</div>
+
+<div id="topRight">
+  <button class="pill-btn" id="flipCamBtn" title="Switch camera">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.3"/></svg>
+    Flip
+  </button>
+</div>
+
+<div id="controls">
+  <div id="controlBar">
+    <button class="ctl" id="btnClear" title="Clear flowers">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
+      Clear
+    </button>
+    <button class="ctl active" id="btnDark" title="Toggle dark mode">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      Dark
+    </button>
+    <button class="ctl active" id="btnSkeleton" title="Toggle hand skeleton">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="1.6"/><circle cx="18" cy="6" r="1.6"/><circle cx="12" cy="18" r="1.6"/><path d="M6 6L12 18M18 6L12 18M6 6L18 6"/></svg>
+      Skeleton
+    </button>
+    <button class="ctl" id="btnPause" title="Pause growth">
+      <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+      Pause
+    </button>
+    <button class="ctl rec" id="btnRecord" title="Record">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="#c94b4b"/></svg>
+      Record
+    </button>
+  </div>
+</div>
+
+<div id="toast"></div>
+<a id="dlLink"></a>
+
+<div id="gate">
+  <svg class="bloom-mark" viewBox="0 0 64 64" fill="none">
+    <path d="M32 44V22" stroke="#7fb37a" stroke-width="3" stroke-linecap="round"/>
+    <ellipse cx="32" cy="16" rx="7" ry="11" fill="#e7c98f" opacity="0.9" transform="rotate(0 32 16)"/>
+    <ellipse cx="32" cy="16" rx="7" ry="11" fill="#e7b98f" opacity="0.75" transform="rotate(72 32 16)"/>
+    <ellipse cx="32" cy="16" rx="7" ry="11" fill="#e7d18f" opacity="0.75" transform="rotate(144 32 16)"/>
+    <ellipse cx="32" cy="16" rx="7" ry="11" fill="#eac48f" opacity="0.75" transform="rotate(216 32 16)"/>
+    <ellipse cx="32" cy="16" rx="7" ry="11" fill="#e7c98f" opacity="0.75" transform="rotate(288 32 16)"/>
+    <circle cx="32" cy="16" r="4" fill="#fff3d6"/>
+  </svg>
+  <h1><b>Bloom</b></h1>
+  <p>Flowers grow live from your open hand, right here in the browser. Point your camera at your palm and let them grow — nothing is uploaded, all tracking happens on your device.</p>
+  <button class="primary" id="startBtn">Start camera</button>
+  <div id="gateSpinner">Loading hand-tracking model…</div>
+  <div id="gateError"></div>
+</div>
+
+<script type="module">
+import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+/* ============================================================================
+   CONFIG  (mirrors bloom.py)
+============================================================================ */
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+const WASM_URL  = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+
+const MAX_HANDS = 2;
+const GLOW_DOWNSCALE = 0.5;
+const MAX_CANVAS_DIM = 960; // cap render resolution for phone perf
+
+const MAX_FLOWERS_PER_HAND = 5;
+const GROW_DURATION_RANGE = [1.6, 2.6];
+const BLOOM_DURATION = 0.85;
+const STEM_MAX_LEN_RANGE = [95, 150];
+const WITHER_SPEED = 0.55;
+
+const OPEN_THRESHOLD = 0.62;
+const SMOOTH_ALPHA_POS = 0.45;
+const SMOOTH_ALPHA_OPEN = 0.18;
+
+// stored BGR (as authored in the original) then converted to RGB for canvas
+const PALETTES_BGR = [
+  [[122,190,255],[66,130,255],[77,148,255],[95,175,100]],
+  [[190,165,255],[150,100,255],[150,200,255],[105,180,110]],
+  [[205,179,255],[170,110,235],[150,200,255],[100,170,100]],
+  [[210,244,255],[110,210,255],[90,165,255],[110,185,105]],
+  [[190,130,255],[140,70,255],[135,190,255],[95,175,100]],
+];
+const bgr2rgb = (t)=>[t[2],t[1],t[0]];
+const PALETTES = PALETTES_BGR.map(p => p.map(bgr2rgb));
+
+const FINGERTIPS = [4, 8, 12, 16, 20];
+const FINGER_JOINTS = {
+  4:  [1, 2, 3, 4],
+  8:  [5, 6, 7, 8],
+  12: [9, 10, 11, 12],
+  16: [13, 14, 15, 16],
+  20: [17, 18, 19, 20],
+};
+const PALM_POINTS = [0, 5, 9, 13, 17];
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17],
+];
+
+/* ============================================================================
+   UTIL
+============================================================================ */
+const clamp = (v,a,b)=> Math.max(a, Math.min(b, v));
+const lerp = (a,b,t)=> a + (b-a)*t;
+const rand = (a,b)=> a + Math.random()*(b-a);
+const randInt = (a,b)=> Math.floor(rand(a,b+1));
+const randChoice = (arr)=> arr[Math.floor(Math.random()*arr.length)];
+
+function easeOutBack(x){
+  const c1=1.70158, c3=2.70158;
+  return 1 + c3*Math.pow(x-1,3) + c1*Math.pow(x-1,2);
+}
+
+function angleAt(a,b,c){
+  const v1=[a[0]-b[0], a[1]-b[1]];
+  const v2=[c[0]-b[0], c[1]-b[1]];
+  const n1=Math.hypot(v1[0],v1[1]), n2=Math.hypot(v2[0],v2[1]);
+  if(n1<1e-6 || n2<1e-6) return 180.0;
+  const cosang = clamp((v1[0]*v2[0]+v1[1]*v2[1])/(n1*n2), -1, 1);
+  return Math.acos(cosang) * 180 / Math.PI;
+}
+
+function rot2d(v, ang){
+  const c=Math.cos(ang), s=Math.sin(ang);
+  return [v[0]*c - v[1]*s, v[0]*s + v[1]*c];
+}
+function vsub(a,b){ return [a[0]-b[0], a[1]-b[1]]; }
+function vlen(a){ return Math.hypot(a[0],a[1]); }
+function vnorm(a){ const l=vlen(a)||1e-6; return [a[0]/l, a[1]/l]; }
+
+/* ============================================================================
+   DRAW PRIMITIVES — every shape is drawn once on the crisp "base" layer and
+   once brighter on the "glow" layer, which later gets blurred and screen-
+   blended back on top (this is what gives the neon bloom look).
+============================================================================ */
+function rgba(c, a){ return `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${clamp(a,0,1)})`; }
+function boost(c, mul){ return [Math.min(255,c[0]*mul), Math.min(255,c[1]*mul), Math.min(255,c[2]*mul)]; }
+
+function drawLine(baseCtx, glowCtx, p1, p2, color, thickness, glowBoost=1.6, alphaMul=1){
+  baseCtx.strokeStyle = rgba(color, alphaMul);
+  baseCtx.lineWidth = thickness; baseCtx.lineCap='round';
+  baseCtx.beginPath(); baseCtx.moveTo(p1[0],p1[1]); baseCtx.lineTo(p2[0],p2[1]); baseCtx.stroke();
+
+  glowCtx.strokeStyle = rgba(boost(color, glowBoost), alphaMul);
+  glowCtx.lineWidth = thickness+2; glowCtx.lineCap='round';
+  glowCtx.beginPath(); glowCtx.moveTo(p1[0],p1[1]); glowCtx.lineTo(p2[0],p2[1]); glowCtx.stroke();
+}
+
+function drawPolyline(baseCtx, glowCtx, pts, color, thickness, glowBoost=1.6, alphaMul=1){
+  if(pts.length<2) return;
+  baseCtx.strokeStyle = rgba(color, alphaMul);
+  baseCtx.lineWidth = thickness; baseCtx.lineJoin='round'; baseCtx.lineCap='round';
+  baseCtx.beginPath(); baseCtx.moveTo(pts[0][0],pts[0][1]);
+  for(let i=1;i<pts.length;i++) baseCtx.lineTo(pts[i][0],pts[i][1]);
+  baseCtx.stroke();
+
+  glowCtx.strokeStyle = rgba(boost(color, glowBoost), alphaMul);
+  glowCtx.lineWidth = thickness+3; glowCtx.lineJoin='round'; glowCtx.lineCap='round';
+  glowCtx.beginPath(); glowCtx.moveTo(pts[0][0],pts[0][1]);
+  for(let i=1;i<pts.length;i++) glowCtx.lineTo(pts[i][0],pts[i][1]);
+  glowCtx.stroke();
+}
+
+function drawCircle(baseCtx, glowCtx, center, radius, color, glowBoost=1.8, alphaMul=1){
+  const r = Math.max(1, radius);
+  baseCtx.fillStyle = rgba(color, alphaMul);
+  baseCtx.beginPath(); baseCtx.arc(center[0],center[1], r, 0, Math.PI*2); baseCtx.fill();
+
+  glowCtx.fillStyle = rgba(boost(color, glowBoost), alphaMul);
+  glowCtx.beginPath(); glowCtx.arc(center[0],center[1], r*1.6, 0, Math.PI*2); glowCtx.fill();
+}
+
+function drawPoly(baseCtx, glowCtx, pts, color, glowBoost=1.6, alphaMul=1){
+  baseCtx.fillStyle = rgba(color, alphaMul);
+  baseCtx.beginPath(); baseCtx.moveTo(pts[0][0],pts[0][1]);
+  for(let i=1;i<pts.length;i++) baseCtx.lineTo(pts[i][0],pts[i][1]);
+  baseCtx.closePath(); baseCtx.fill();
+
+  glowCtx.fillStyle = rgba(boost(color, glowBoost), alphaMul);
+  glowCtx.beginPath(); glowCtx.moveTo(pts[0][0],pts[0][1]);
+  for(let i=1;i<pts.length;i++) glowCtx.lineTo(pts[i][0],pts[i][1]);
+  glowCtx.closePath(); glowCtx.fill();
+}
+
+function drawDiamond(baseCtx, glowCtx, center, size, color, alphaMul=1){
+  const [cx,cy]=center;
+  const pts=[[cx,cy-size],[cx+size,cy],[cx,cy+size],[cx-size,cy]];
+  drawPoly(baseCtx, glowCtx, pts, color, 1.4, alphaMul);
+}
+
+/* ============================================================================
+   PARTICLES
+============================================================================ */
+class ParticleSystem{
+  constructor(){ this.particles=[]; }
+  burst(origin, color, count=18, speed=[60,170], radius=[1.5,3.2]){
+    for(let i=0;i<count;i++){
+      const ang = rand(0, Math.PI*2);
+      const spd = rand(speed[0], speed[1]);
+      const vyBias = rand(-110,-40);
+      const vel = [Math.cos(ang)*spd, Math.sin(ang)*spd*0.6 + vyBias];
+      this.particles.push({
+        pos:[origin[0],origin[1]], vel,
+        life: rand(0.55,1.05), maxLife:1.0, color, radius: rand(radius[0],radius[1]),
+      });
+    }
+  }
+  sparkle(origin, color, jitter=6){
+    const p=[origin[0]+rand(-jitter,jitter), origin[1]+rand(-jitter,jitter)];
+    this.particles.push({
+      pos:p, vel:[rand(-8,8), rand(-45,-15)],
+      life: rand(0.35,0.6), maxLife:0.6, color, radius: rand(1.0,2.0),
+    });
+  }
+  update(dt){
+    const gravity=55.0;
+    const alive=[];
+    for(const p of this.particles){
+      p.life -= dt;
+      if(p.life<=0) continue;
+      p.vel[1] += gravity*dt;
+      p.pos[0] += p.vel[0]*dt; p.pos[1] += p.vel[1]*dt;
+      alive.push(p);
+    }
+    this.particles = alive.length>260 ? alive.slice(alive.length-260) : alive;
+  }
+  draw(baseCtx, glowCtx){
+    for(const p of this.particles){
+      const t = clamp(p.life/p.maxLife, 0, 1);
+      drawCircle(baseCtx, glowCtx, p.pos, p.radius*(0.5+0.5*t), p.color, 2.2, t);
+    }
+  }
+}
+
+/* ============================================================================
+   FLOWER — grows from a fingertip, fully procedural (direct port of Flower)
+============================================================================ */
+class Flower{
+  constructor(palette){
+    this.palette = palette; // [petal, petalDeep, center, stem] RGB
+    this.progress = 0.0;
+    this.bloomT = 0.0;
+    this.growDuration = rand(GROW_DURATION_RANGE[0], GROW_DURATION_RANGE[1]);
+    this.maxLen = rand(STEM_MAX_LEN_RANGE[0], STEM_MAX_LEN_RANGE[1]);
+    this.alive = true;
+    this.wither = 0.0;
+    this.anchor=[0,0]; this.direction=[0,-1]; this.perp=[1,0]; this.tNow=0;
+
+    const n=22;
+    this.pathLocal=[];
+    let lateral=0, vel=0;
+    const lean = rand(-0.35,0.35);
+    for(let i=0;i<=n;i++){
+      const t=i/n;
+      vel += rand(-1,1)*0.10;
+      vel *= 0.85;
+      lateral += vel;
+      const x = lateral*0.5 + lean*Math.pow(t,1.5);
+      this.pathLocal.push([x, t]);
+    }
+
+    const leafCount = randInt(2,3);
+    this.leaves=[];
+    for(let i=0;i<leafCount;i++){
+      const t = 0.30 + (i/Math.max(1,leafCount))*0.5 + rand(-0.03,0.03);
+      this.leaves.push({ t: clamp(t,0.15,0.85), side: (i%2===0)?1:-1, phase: rand(0,10), scale: rand(0.75,1.15) });
+    }
+
+    this.petalCount = randInt(6,9);
+    this.petalLen = rand(20,30);
+    this.petalJitter = Array.from({length:this.petalCount}, ()=>rand(-0.12,0.12));
+    this.swayPhase = rand(0,10);
+    this.burstDone = false;
+  }
+
+  update(dt, anchor, direction, handOpen, tNow){
+    if(!handOpen) this.wither += dt*WITHER_SPEED;
+    else this.wither = Math.max(0, this.wither - dt*0.8);
+
+    if(this.wither>=1.0){ this.alive=false; return; }
+
+    if(this.progress<1.0){
+      let growthRate = dt/this.growDuration;
+      if(!handOpen) growthRate *= 0.15;
+      this.progress = clamp(this.progress+growthRate, 0, 1);
+    } else if(this.bloomT<1.0){
+      this.bloomT = clamp(this.bloomT + dt/BLOOM_DURATION, 0, 1);
+    }
+
+    this.anchor = anchor;
+    this.direction = vnorm(direction);
+    this.perp = [-this.direction[1], this.direction[0]];
+    this.tNow = tNow;
+  }
+
+  toWorld(localXY){
+    const [x,y]=localXY;
+    return [
+      this.anchor[0] + this.direction[0]*(y*this.maxLen) + this.perp[0]*(x*this.maxLen*0.5),
+      this.anchor[1] + this.direction[1]*(y*this.maxLen) + this.perp[1]*(x*this.maxLen*0.5),
+    ];
+  }
+
+  stemPoints(){
+    const nTotal = this.pathLocal.length;
+    const reveal = this.progress*(nTotal-1);
+    const idx = Math.floor(reveal);
+    const frac = reveal-idx;
+    const pts = this.pathLocal.slice(0, idx+1).map(p=>this.toWorld(p));
+    if(idx+1<nTotal && idx>=0){
+      const a=this.pathLocal[idx], b=this.pathLocal[idx+1];
+      pts.push(this.toWorld([lerp(a[0],b[0],frac), lerp(a[1],b[1],frac)]));
+    }
+    return pts;
+  }
+
+  tipPoint(){
+    const t = clamp(this.progress, 0.001, 1.0);
+    const nTotal = this.pathLocal.length;
+    const reveal = t*(nTotal-1);
+    const idx = Math.min(nTotal-2, Math.floor(reveal));
+    const frac = reveal-idx;
+    const a=this.pathLocal[idx], b=this.pathLocal[idx+1];
+    return this.toWorld([lerp(a[0],b[0],frac), lerp(a[1],b[1],frac)]);
+  }
+
+  draw(baseCtx, glowCtx, particles){
+    const alphaMul = clamp(1.0-this.wither, 0, 1);
+    const [petalC, petalDeep, centerC, stemC] = this.palette;
+
+    const pts = this.stemPoints();
+    if(pts.length>=2){
+      const thickness = Math.max(2, Math.round(3+2*this.progress));
+      drawPolyline(baseCtx, glowCtx, pts, stemC, thickness, 1.3, alphaMul);
+    }
+
+    for(const leaf of this.leaves){
+      const t=leaf.t;
+      if(this.progress < t-0.015) continue;
+      const localProg = clamp((this.progress-t)/0.16, 0, 1);
+      const s = easeOutBack(localProg)*leaf.scale;
+      if(s<=0.01) continue;
+      const nTotal = this.pathLocal.length;
+      const reveal = clamp(t,0,1)*(nTotal-1);
+      const idx = Math.min(nTotal-2, Math.floor(reveal));
+      const frac = reveal-idx;
+      const a=this.pathLocal[idx], b=this.pathLocal[idx+1];
+      const baseLocal = [lerp(a[0],b[0],frac), lerp(a[1],b[1],frac)];
+      const attach = this.toWorld(baseLocal);
+      const sway = Math.sin(this.tNow*1.6+leaf.phase)*0.18;
+      const side = leaf.side;
+      const ang = side*(0.9+sway);
+      const ldir = rot2d(this.direction, ang);
+      const lperp = [-ldir[1], ldir[0]];
+      const length=16*s, width=7*s;
+      const tip=[attach[0]+ldir[0]*length, attach[1]+ldir[1]*length];
+      const c1=[attach[0]+ldir[0]*length*0.5+lperp[0]*width, attach[1]+ldir[1]*length*0.5+lperp[1]*width];
+      const c2=[attach[0]+ldir[0]*length*0.5-lperp[0]*width, attach[1]+ldir[1]*length*0.5-lperp[1]*width];
+      drawPoly(baseCtx, glowCtx, [attach,c1,tip,c2], stemC, 1.1, alphaMul);
+    }
+
+    if(this.progress>0.02 && this.progress<1.0){
+      const tip = this.tipPoint();
+      const r = 3+2.5*this.progress;
+      drawCircle(baseCtx, glowCtx, tip, r, stemC, 1.6, alphaMul);
+      if(Math.random()<0.5) particles.sparkle(tip, petalC);
+    }
+
+    if(this.progress>=1.0){
+      const tip = this.tipPoint();
+      const bp = this.bloomT;
+      const eb = clamp(easeOutBack(bp), 0, 1.25);
+      const petalLen = this.petalLen*(0.15+0.85*eb);
+      for(let i=0;i<this.petalCount;i++){
+        const baseAng = (i/this.petalCount)*Math.PI*2 + this.petalJitter[i];
+        const sway = Math.sin(this.tNow*1.4+this.swayPhase+i)*0.03;
+        const ang = baseAng+sway;
+        const pdir = rot2d(this.direction, ang);
+        const pperp = [-pdir[1], pdir[0]];
+        const width = petalLen*0.42;
+        const pTip=[tip[0]+pdir[0]*petalLen, tip[1]+pdir[1]*petalLen];
+        const c1=[tip[0]+pdir[0]*petalLen*0.55+pperp[0]*width, tip[1]+pdir[1]*petalLen*0.55+pperp[1]*width];
+        const c2=[tip[0]+pdir[0]*petalLen*0.55-pperp[0]*width, tip[1]+pdir[1]*petalLen*0.55-pperp[1]*width];
+        const col = (i%2===0) ? petalDeep : petalC;
+        drawPoly(baseCtx, glowCtx, [tip,c1,pTip,c2], col, 1.7, alphaMul);
+      }
+      drawCircle(baseCtx, glowCtx, tip, 5+3*eb, centerC, 2.4, alphaMul);
+
+      if(!this.burstDone && bp>0.2){
+        this.burstDone = true;
+        particles.burst(tip, centerC, 22);
+      }
+    }
+  }
+}
+
+/* ============================================================================
+   PER-HAND STATE
+============================================================================ */
+class HandState{
+  constructor(){
+    this.smoothed = {};
+    this.openness = 0.0;
+    this.present = false;
+    this.flowers = {};
+    for(const tip of FINGERTIPS) this.flowers[tip] = new Flower(randChoice(PALETTES));
+    this.lastSeen = 0;
+  }
+  smoothPoint(idx, pt){
+    if(!(idx in this.smoothed)) this.smoothed[idx] = pt;
+    else this.smoothed[idx] = [
+      lerp(this.smoothed[idx][0], pt[0], SMOOTH_ALPHA_POS),
+      lerp(this.smoothed[idx][1], pt[1], SMOOTH_ALPHA_POS),
+    ];
+    return this.smoothed[idx];
+  }
+}
+
+/* ============================================================================
+   APP
+============================================================================ */
+const $ = (id)=>document.getElementById(id);
+const gate = $('gate'), startBtn = $('startBtn'), gateError = $('gateError'), gateSpinner = $('gateSpinner');
+const video = $('cam');
+const viewCanvas = $('view');
+const viewCtx = viewCanvas.getContext('2d');
+const hintEl = $('hint');
+const toastEl = $('toast');
+
+let toastTimer=null;
+function toast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>toastEl.classList.remove('show'), 1600);
+}
+
+let facingMode = 'user';
+let handLandmarker = null;
+let running = false;
+
+let w=0, h=0;
+let baseCanvas, baseCtx, glowCanvas, glowCtx;
+let smallCanvas, smallCtx, blur1Canvas, blur1Ctx, blur2Canvas, blur2Ctx, combCanvas, combCtx;
+let vignetteCanvas;
+
+let darkMode = true;
+let showSkeleton = true;
+let paused = false;
+let recording = false;
+let mediaRecorder = null, recordedChunks = [];
+
+let hands = {}; // slot -> HandState
+const particles = new ParticleSystem();
+
+let prevT = performance.now()/1000;
+let fpsSmooth = 30;
+
+async function initModel(){
+  const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+  let delegate = 'GPU';
+  try{
+    handLandmarker = await HandLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: MODEL_URL, delegate },
+      runningMode: 'VIDEO',
+      numHands: MAX_HANDS,
+      minHandDetectionConfidence: 0.55,
+      minHandPresenceConfidence: 0.55,
+      minTrackingConfidence: 0.55,
+    });
+  }catch(e){
+    delegate = 'CPU';
+    handLandmarker = await HandLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: MODEL_URL, delegate },
+      runningMode: 'VIDEO',
+      numHands: MAX_HANDS,
+      minHandDetectionConfidence: 0.55,
+      minHandPresenceConfidence: 0.55,
+      minTrackingConfidence: 0.55,
+    });
+  }
+}
+
+async function initCamera(){
+  const constraints = {
+    audio:false,
+    video:{ facingMode, width:{ideal:1280}, height:{ideal:720} }
+  };
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  video.srcObject = stream;
+  await video.play();
+  await new Promise(res=>{
+    if(video.videoWidth) return res();
+    video.onloadedmetadata = ()=>res();
+  });
+}
+
+function makeVignette(w,h){
+  const c = document.createElement('canvas'); c.width=w; c.height=h;
+  const ctx = c.getContext('2d');
+  const cx=w/2, cy=h/2;
+  const maxR = Math.sqrt(cx*cx+cy*cy);
+  const grad = ctx.createRadialGradient(cx,cy, maxR*0.32, cx,cy, maxR*0.98);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.72)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,w,h);
+  return c;
+}
+
+function setupCanvases(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const scale = Math.min(1, MAX_CANVAS_DIM / Math.max(vw,vh));
+  w = Math.round(vw*scale); h = Math.round(vh*scale);
+
+  viewCanvas.width = w; viewCanvas.height = h;
+
+  baseCanvas = document.createElement('canvas'); baseCanvas.width=w; baseCanvas.height=h;
+  baseCtx = baseCanvas.getContext('2d');
+
+  glowCanvas = document.createElement('canvas'); glowCanvas.width=w; glowCanvas.height=h;
+  glowCtx = glowCanvas.getContext('2d');
+
+  const sw = Math.max(1, Math.round(w*GLOW_DOWNSCALE));
+  const sh = Math.max(1, Math.round(h*GLOW_DOWNSCALE));
+  smallCanvas = document.createElement('canvas'); smallCanvas.width=sw; smallCanvas.height=sh;
+  smallCtx = smallCanvas.getContext('2d');
+  blur1Canvas = document.createElement('canvas'); blur1Canvas.width=sw; blur1Canvas.height=sh;
+  blur1Ctx = blur1Canvas.getContext('2d');
+  blur2Canvas = document.createElement('canvas'); blur2Canvas.width=sw; blur2Canvas.height=sh;
+  blur2Ctx = blur2Canvas.getContext('2d');
+  combCanvas = document.createElement('canvas'); combCanvas.width=sw; combCanvas.height=sh;
+  combCtx = combCanvas.getContext('2d');
+
+  vignetteCanvas = makeVignette(w,h);
+}
+
+/* -- gesture analysis (mirrors BloomApp) -- */
+function fingerExtended(ptsPx, tipIdx){
+  const j = FINGER_JOINTS[tipIdx];
+  const a = ptsPx[j[0]], c = ptsPx[j[2]], d = ptsPx[j[3]];
+  const ang = angleAt(a, c, d);
+  return ang > 145.0;
+}
+function handOpenness(ptsPx){
+  let count=0;
+  for(const tip of FINGERTIPS) if(fingerExtended(ptsPx, tip)) count++;
+  return count / FINGERTIPS.length;
+}
+function palmCenter(ptsPx){
+  let sx=0, sy=0;
+  for(const i of PALM_POINTS){ sx+=ptsPx[i][0]; sy+=ptsPx[i][1]; }
+  return [sx/PALM_POINTS.length, sy/PALM_POINTS.length];
+}
+
+function drawSkeleton(ptsPx, alphaMul=1){
+  const color = [130, 210, 255]; // RGB (was BGR 255,210,130)
+  for(const [a,b] of HAND_CONNECTIONS){
+    drawLine(baseCtx, glowCtx, ptsPx[a], ptsPx[b], color, 2, 1.1, alphaMul);
+  }
+  ptsPx.forEach((p,i)=>{
+    const size = FINGERTIPS.includes(i) ? 5 : 3;
+    drawDiamond(baseCtx, glowCtx, p, size, color, alphaMul);
+  });
+}
+
+function drawHUD(fps, avgBloom, nFlowers){
+  const ctx = viewCtx;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(235,225,210,0.95)';
+  ctx.font = '600 20px -apple-system, sans-serif';
+  ctx.fillText('BLOOM', 24, 38);
+  ctx.fillStyle = 'rgba(190,180,165,0.9)';
+  ctx.font = '400 11px -apple-system, sans-serif';
+  ctx.fillText('flowers grown live from your hand', 24, 56);
+
+  ctx.fillStyle = 'rgba(170,200,170,0.9)';
+  ctx.font = '400 11px -apple-system, sans-serif';
+  ctx.fillText(`Bloom: ${avgBloom.toFixed(2)}   FPS: ${fps.toFixed(0)}   Flowers: ${nFlowers}`, 24, h-16);
+
+  if(recording){
+    ctx.fillStyle = '#ff5050';
+    ctx.beginPath(); ctx.arc(w-26, 20, 6, 0, Math.PI*2); ctx.fill();
+    ctx.font = '600 12px -apple-system, sans-serif';
+    ctx.fillText('REC', w-64, 25);
+  }
+}
+
+/* -- composite glow onto base with a two-pass blur + screen blend -- */
+function compositeGlow(){
+  smallCtx.clearRect(0,0,smallCanvas.width, smallCanvas.height);
+  smallCtx.drawImage(glowCanvas, 0,0, smallCanvas.width, smallCanvas.height);
+
+  blur1Ctx.clearRect(0,0,blur1Canvas.width, blur1Canvas.height);
+  blur1Ctx.filter = `blur(${(9*GLOW_DOWNSCALE).toFixed(2)}px)`;
+  blur1Ctx.drawImage(smallCanvas, 0, 0);
+  blur1Ctx.filter = 'none';
+
+  blur2Ctx.clearRect(0,0,blur2Canvas.width, blur2Canvas.height);
+  blur2Ctx.filter = `blur(${(22*GLOW_DOWNSCALE).toFixed(2)}px)`;
+  blur2Ctx.drawImage(smallCanvas, 0, 0);
+  blur2Ctx.filter = 'none';
+
+  combCtx.clearRect(0,0,combCanvas.width, combCanvas.height);
+  combCtx.globalAlpha = 0.9;
+  combCtx.globalCompositeOperation = 'lighter';
+  combCtx.drawImage(blur1Canvas, 0, 0);
+  combCtx.globalAlpha = 0.55;
+  combCtx.drawImage(blur2Canvas, 0, 0);
+  combCtx.globalAlpha = 1;
+  combCtx.globalCompositeOperation = 'source-over';
+
+  viewCtx.globalCompositeOperation = 'screen';
+  viewCtx.drawImage(combCanvas, 0, 0, w, h);
+  viewCtx.globalCompositeOperation = 'source-over';
+}
+
+/* -- main loop -- */
+function frame(){
+  if(!running) return;
+  requestAnimationFrame(frame);
+
+  const now = performance.now()/1000;
+  const dt = clamp(now-prevT, 0, 0.05);
+  prevT = now;
+  const fps = 1/Math.max(1e-6, dt);
+  fpsSmooth = lerp(fpsSmooth, fps, 0.1);
+
+  // hand detection on the raw (unmirrored) video frame
+  let result = { landmarks: [] };
+  try{
+    result = handLandmarker.detectForVideo(video, performance.now());
+  }catch(e){ /* ignore transient detector errors */ }
+
+  // base: mirrored camera frame
+  baseCtx.save();
+  baseCtx.setTransform(-1,0,0,1,w,0);
+  baseCtx.drawImage(video, 0,0, w, h);
+  baseCtx.restore();
+
+  if(darkMode){
+    const img = baseCtx;
+    img.save();
+    img.fillStyle = 'rgba(6,9,15,0.68)';
+    img.fillRect(0,0,w,h);
+    img.globalCompositeOperation = 'multiply';
+    img.drawImage(vignetteCanvas, 0, 0);
+    img.globalCompositeOperation = 'source-over';
+    img.restore();
+  }
+
+  glowCtx.clearRect(0,0,w,h);
+
+  const activeSlots = new Set();
+  const avgBloomVals = [];
+  let nFlowersGrowing = 0;
+
+  const lmSets = result.landmarks || [];
+  lmSets.forEach((lmList, handIdx)=>{
+    activeSlots.add(handIdx);
+    if(!(handIdx in hands)) hands[handIdx] = new HandState();
+    const hs = hands[handIdx];
+    hs.present = true; hs.lastSeen = now;
+
+    const ptsPxRaw = lmList.map(lm => [(1-lm.x)*w, lm.y*h]);
+    const ptsPx = ptsPxRaw.map((p,i)=>hs.smoothPoint(i,p));
+
+    const opennessRaw = handOpenness(ptsPx);
+    hs.openness = lerp(hs.openness, opennessRaw, SMOOTH_ALPHA_OPEN);
+    const isOpen = hs.openness > OPEN_THRESHOLD;
+
+    const palmC = palmCenter(ptsPx);
+
+    if(showSkeleton) drawSkeleton(ptsPx, 1);
+
+    for(const tipIdx of FINGERTIPS){
+      const tipPt = ptsPx[tipIdx];
+      let direction = vsub(tipPt, palmC);
+      if(vlen(direction) < 1e-3) direction = [0,-1];
+      let flower = hs.flowers[tipIdx];
+      if(!paused) flower.update(dt, tipPt, direction, isOpen, now);
+      if(flower.alive){
+        flower.draw(baseCtx, glowCtx, particles);
+        avgBloomVals.push(flower.progress);
+        if(flower.progress<1.0) nFlowersGrowing++;
+      }
+      if(!flower.alive) hs.flowers[tipIdx] = new Flower(randChoice(PALETTES));
+    }
+  });
+
+  for(const slot of Object.keys(hands)){
+    const idx = Number(slot);
+    if(!activeSlots.has(idx)){
+      const hs = hands[idx];
+      hs.present = false;
+      hs.openness = lerp(hs.openness, 0, 0.1);
+      for(const tipIdx of Object.keys(hs.flowers)){
+        const flower = hs.flowers[tipIdx];
+        if(!paused){
+          const anchor = flower.anchor || [w/2, h/2];
+          const direction = flower.direction || [0,-1];
+          flower.update(dt, anchor, direction, false, now);
+        }
+        if(flower.alive) flower.draw(baseCtx, glowCtx, particles);
+      }
+      if(now - hs.lastSeen > 6.0) delete hands[idx];
+    }
+  }
+
+  if(!paused) particles.update(dt);
+  particles.draw(baseCtx, glowCtx);
+
+  viewCtx.clearRect(0,0,w,h);
+  viewCtx.drawImage(baseCanvas, 0, 0);
+  compositeGlow();
+
+  const avgBloom = avgBloomVals.length ? avgBloomVals.reduce((a,b)=>a+b,0)/avgBloomVals.length : 0;
+  drawHUD(fpsSmooth, avgBloom, avgBloomVals.length);
+}
+
+/* -- controls -- */
+function clearAll(){
+  for(const hs of Object.values(hands)){
+    for(const tip of FINGERTIPS) hs.flowers[tip] = new Flower(randChoice(PALETTES));
+  }
+  particles.particles.length = 0;
+  toast('Cleared');
+}
+
+$('btnClear').onclick = clearAll;
+$('btnDark').onclick = ()=>{
+  darkMode = !darkMode;
+  $('btnDark').classList.toggle('active', darkMode);
+};
+$('btnSkeleton').onclick = ()=>{
+  showSkeleton = !showSkeleton;
+  $('btnSkeleton').classList.toggle('active', showSkeleton);
+};
+$('btnPause').onclick = ()=>{
+  paused = !paused;
+  $('btnPause').classList.toggle('active', paused);
+  toast(paused ? 'Paused' : 'Resumed');
+};
+$('btnRecord').onclick = toggleRecord;
+$('flipCamBtn').onclick = switchCamera;
+
+function toggleRecord(){
+  if(!recording){
+    try{
+      const stream = viewCanvas.captureStream(30);
+      recordedChunks = [];
+      const mimeCandidates = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+      const mime = mimeCandidates.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+      mediaRecorder = mime ? new MediaRecorder(stream, {mimeType:mime}) : new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = (e)=>{ if(e.data && e.data.size>0) recordedChunks.push(e.data); };
+      mediaRecorder.onstop = ()=>{
+        const blob = new Blob(recordedChunks, {type:'video/webm'});
+        const url = URL.createObjectURL(blob);
+        const a = $('dlLink');
+        a.href = url; a.download = `bloom_${Date.now()}.webm`;
+        document.body.appendChild(a); a.click();
+        setTimeout(()=>URL.revokeObjectURL(url), 4000);
+      };
+      mediaRecorder.start();
+      recording = true;
+      $('btnRecord').classList.add('active');
+      toast('Recording…');
+    }catch(e){
+      toast('Recording not supported here');
+    }
+  } else {
+    recording = false;
+    $('btnRecord').classList.remove('active');
+    if(mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    toast('Saved recording');
+  }
+}
+
+async function switchCamera(){
+  facingMode = (facingMode === 'user') ? 'environment' : 'user';
+  const oldStream = video.srcObject;
+  if(oldStream) oldStream.getTracks().forEach(t=>t.stop());
+  try{
+    await initCamera();
+    setupCanvases();
+    toast(facingMode === 'user' ? 'Front camera' : 'Back camera');
+  }catch(e){
+    toast('Could not switch camera');
+  }
+}
+
+// keyboard parity for desktop browsers
+window.addEventListener('keydown', (e)=>{
+  const k = e.key.toLowerCase();
+  if(k==='c') clearAll();
+  else if(k==='d') $('btnDark').click();
+  else if(k==='s') $('btnSkeleton').click();
+  else if(k===' '){ e.preventDefault(); $('btnPause').click(); }
+  else if(k==='r') $('btnRecord').click();
+});
+
+/* -- boot sequence -- */
+startBtn.addEventListener('click', async ()=>{
+  startBtn.disabled = true;
+  startBtn.style.opacity = 0.5;
+  gateSpinner.style.display = 'block';
+  gateError.style.display = 'none';
+  try{
+    await initCamera();
+    await initModel();
+    setupCanvases();
+    gate.style.display = 'none';
+    hintEl.classList.add('show');
+    setTimeout(()=>hintEl.classList.remove('show'), 5000);
+    running = true;
+    prevT = performance.now()/1000;
+    requestAnimationFrame(frame);
+  }catch(err){
+    gateSpinner.style.display = 'none';
+    gateError.style.display = 'block';
+    gateError.textContent = 'Could not start camera or hand-tracking: ' + (err && err.message ? err.message : err) +
+      '. Check camera permissions and that you are on https (or localhost), then try again.';
+    startBtn.disabled = false;
+    startBtn.style.opacity = 1;
+  }
+});
+</script>
+</body>
+</html>
